@@ -5,7 +5,7 @@ import argparse
 import os
 # from collections import namedtuple
 from typing import Dict
-
+from collections import namedtuple
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning import Trainer
@@ -48,6 +48,8 @@ class BertNerTagger(pl.LightningModule):
             # eval mode
             TmpArgs = namedtuple("tmp_args", field_names=list(args.keys()))
             self.args = args = TmpArgs(**args)
+            print(self.args)
+            print(args)
 
         self.bert_dir = args.bert_config_dir
         self.data_dir = self.args.data_dir
@@ -61,7 +63,7 @@ class BertNerTagger(pl.LightningModule):
                                                   config=bert_config,
                                                   args=self.args)
         logging.info(str(args.__dict__ if isinstance(args, argparse.ArgumentParser) else args))
-
+        self.results = []
         self.optimizer = args.optimizer
         self.n_class = args.n_class
 
@@ -92,7 +94,7 @@ class BertNerTagger(pl.LightningModule):
         parser.add_argument("--bert_max_length", type=int, default=128, help="max length of dataset")
         parser.add_argument("--batch_size", type=int, default=10, help="batch size")
         parser.add_argument("--lr", type=float, default=1e-5, help="learning rate")
-        parser.add_argument("--workers", type=int, default=0, help="num workers for dataloader")
+        parser.add_argument("--workers", type=int, default=32, help="num workers for dataloader")
         parser.add_argument("--weight_decay", default=0.01, type=float,
                             help="Weight decay if we apply some.")
         parser.add_argument("--warmup_steps", default=0, type=int,
@@ -249,7 +251,7 @@ class BertNerTagger(pl.LightningModule):
         all_span_rep = self.forward(loadall,all_span_lens,all_span_idxs_ltoken,tokens, attention_mask, token_type_ids)
         predicts = self.classifier(all_span_rep)
         # print('all_span_rep.shape: ', all_span_rep.shape)
-
+        
         output = {}
         if self.args.use_prune:
             span_f1s,pred_label_idx = span_f1_prune(all_span_idxs, predicts, span_label_ltoken, real_span_mask_ltoken)
@@ -289,7 +291,7 @@ class BertNerTagger(pl.LightningModule):
         self.fwrite_epoch_res.write(
             "train: %f, %f, %f, %d, %d, %d\n" % (f1, recall, precision, correct_pred, total_pred, total_golden))
 
-        return {'val_loss': avg_loss, 'log': tensorboard_logs}
+        # return {'val_loss': avg_loss, 'log': tensorboard_logs}
 
     def validation_step(self, batch, batch_idx):
         """"""
@@ -303,7 +305,7 @@ class BertNerTagger(pl.LightningModule):
         attention_mask = (tokens != 0).long()
         all_span_rep = self.forward(loadall,all_span_lens,all_span_idxs_ltoken, tokens, attention_mask, token_type_ids)
         predicts = self.classifier(all_span_rep)
-
+        
         # pred_label_idx_new = torch.zeros_like(real_span_mask_ltoken)
         if self.args.use_prune:
             span_f1s,pred_label_idx = span_f1_prune(all_span_idxs, predicts, span_label_ltoken, real_span_mask_ltoken)
@@ -318,10 +320,12 @@ class BertNerTagger(pl.LightningModule):
             span_f1s = span_f1(predicts, span_label_ltoken, real_span_mask_ltoken)
             batch_preds = get_predict(self.args, all_span_word, words, predicts, span_label_ltoken,
                                                all_span_idxs)
-
+        self.results.append([predicts, span_label_ltoken, real_span_mask_ltoken,all_span_word, words, all_span_idxs])
+        fwrite_prob = open('results.pickle', 'wb')
+        pickle.dump(self.results, fwrite_prob)
         output["span_f1s"] = span_f1s
         loss = self.compute_loss(loadall,all_span_rep, span_label_ltoken, real_span_mask_ltoken,mode='test/dev')
-
+        
 
         output["batch_preds"] =batch_preds
         # output["batch_preds_prune"] = pred_label_idx_new
@@ -385,6 +389,7 @@ class BertNerTagger(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         """"""
+        print("use... test_step: ",)
         return self.validation_step(batch, batch_idx)
 
     def test_epoch_end(
@@ -471,10 +476,10 @@ class BertNerTagger(pl.LightningModule):
         #                         pad_to_maxlen=False
         #                         )
 
-        vocab_path = os.path.join(self.bert_dir, "vocab.txt")
+        # vocab_path = os.path.join(self.bert_dir, "vocab.txt")
         print("use BertWordPieceTokenizer as the tokenizer ")
         dataset = BERTNERDataset(self.args, json_path=json_path,
-                                 tokenizer=BertWordPieceTokenizer(vocab_path),
+                                 tokenizer=BertWordPieceTokenizer("vocab.txt"),
                                  # tokenizer=BertWordPieceTokenizer(vocab_file=vocab_path),
                                  max_length=self.args.bert_max_length,
                                  pad_to_maxlen=False
@@ -489,9 +494,9 @@ class BertNerTagger(pl.LightningModule):
         dataloader = DataLoader(
             dataset=dataset,
             batch_size=self.args.batch_size,
-            # num_workers=self.args.workers,
-            shuffle=True if prefix == "train" else False,
-            # shuffle=False,
+            num_workers=self.args.workers,
+            # shuffle=True if prefix == "train" else False,
+            shuffle=False,
             drop_last=False,
             collate_fn=collate_to_max_length
         )
@@ -526,6 +531,8 @@ def main():
                      'tvshow':8,'musicartist':9,'sportsteam':10}
     elif args.dataname == 'wnut17':
         label2idx = {'O': 0,'location':1, 'group':2,'corporation':3,'person':4,'creative-work':5,'product':6}
+    elif args.dataname == 'fepd':
+        label2idx = {'O' : 0, 'target_direct' : 1, 'source_direct' : 2, 'source_indirect': 3, 'data' : 4, 'reason': 5, 'data_compulsory' : 6, 'medium':7,'target_in_direct':8,'data_optional':9}
 
     label2idx_list = []
     for lab, idx in label2idx.items():
@@ -570,16 +577,16 @@ def main():
 
     # save the best model
     checkpoint_callback = ModelCheckpoint(
-        filepath=args.default_root_dir,
+        dirpath=args.default_root_dir,
         save_top_k=1,
         verbose=True,
         monitor="span_f1",
-        period=-1,
+        # period=-1,
         mode="max",
     )
     trainer = Trainer.from_argparse_args(
         args,
-        checkpoint_callback=checkpoint_callback
+        # checkpoint_callback=checkpoint_callback
     )
 
     trainer.fit(model)

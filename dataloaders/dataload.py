@@ -89,7 +89,7 @@ class BERTNERDataset(Dataset):
 			context = context.replace('  ', ' ')
 
 		span_idxLab = data["span_posLabel"]
-
+		# print(len(span_idxLab))
 		sidxs = []
 		eidxs = []
 		for seidx, label in span_idxLab.items():
@@ -194,7 +194,7 @@ class BERTNERDataset(Dataset):
 		morph_idxs = torch.LongTensor(morph_idxs)
 		all_span_weights = torch.Tensor(all_span_weights)
 
-		min_idx = np.max(np.array(all_span_idxs_ltoken))
+		# min_idx = np.max(np.array(all_span_idxs_ltoken))
 
 
 		return [
@@ -323,12 +323,15 @@ class BERTNERDataset(Dataset):
 		n_span_keep = 0
 
 		for start, end in zip(sidxs, eidxs):
-			if origin_offset2token_eidx[end] > max_length - 1 or origin_offset2token_sidx[
-				start] > max_length - 1:
-				continue
-			span_new_sidxs.append(origin_offset2token_sidx[start])
-			span_new_eidxs.append(origin_offset2token_eidx[end])
-			n_span_keep += 1
+			try:
+				if origin_offset2token_eidx[end] > max_length - 1 or origin_offset2token_sidx[
+					start] > max_length - 1:
+					continue
+				span_new_sidxs.append(origin_offset2token_sidx[start])
+				span_new_eidxs.append(origin_offset2token_eidx[end])
+				n_span_keep += 1
+			except Exception as e: print(e)
+
 
 		all_span_word = []
 		for (sidx, eidx) in span_idxs:
